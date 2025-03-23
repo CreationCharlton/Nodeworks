@@ -37,6 +37,9 @@ const corsOptions = {
   
   app.use(cors(corsOptions));
 
+  app.get("/", (req, res) => res.send("Server is live!"));
+
+
 // Serve Socket.IO client files
 app.use('/socket.io', express.static(path.join(__dirname, 'node_modules/socket.io/client-dist')));
 
