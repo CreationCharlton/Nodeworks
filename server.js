@@ -277,11 +277,13 @@ io.on('connection', (socket) => {
                 }
             }
 
-            const gameId = generateGameId();
+            
+            const gameId = generateGameId(); // Generate a new game ID
             const gameRoom = new GameRoom(gameId);
+            gameRooms.set(gameId, gameRoom);
+            socket.join(gameId);
             const playerColor = gameRoom.addPlayer(socket, playerName);
             
-            gameRooms.set(gameId, gameRoom);
     socket.join(gameId);
 
             socket.emit('game-created', {
