@@ -110,7 +110,8 @@ class GameRoom {
     updateGameState(newState) {
         this.gameState = {
             ...this.gameState,
-            ...newState
+            ...newState,
+             currentOperation: newState.currentOperation // Ensure operation is included
         };
         this.lastActivityTime = Date.now();
         this.broadcastGameState();
