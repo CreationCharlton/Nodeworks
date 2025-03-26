@@ -111,7 +111,7 @@ class GameRoom {
         this.gameState = {
             ...this.gameState,
             ...newState,
-             currentOperation: newState.currentOperation // Ensure operation is included
+            currentOperation: newState.currentOperation // Ensure operation is included
         };
         this.lastActivityTime = Date.now();
         this.broadcastGameState();
@@ -277,13 +277,11 @@ io.on('connection', (socket) => {
                 }
             }
 
-            
-            const gameId = generateGameId(); // Generate a new game ID
+            const gameId = generateGameId();
             const gameRoom = new GameRoom(gameId);
-            gameRooms.set(gameId, gameRoom);
-            socket.join(gameId);
             const playerColor = gameRoom.addPlayer(socket, playerName);
             
+            gameRooms.set(gameId, gameRoom);
     socket.join(gameId);
 
             socket.emit('game-created', {
