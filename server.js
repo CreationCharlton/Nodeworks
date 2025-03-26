@@ -53,6 +53,7 @@ class GameRoom {
         this.lastActivityTime = Date.now();
         this.inactivityTimeout = 30 * 60 * 1000; // 30 minutes
         console.log(`Created new game room: ${id}`);
+        this.pendingRestarts = new Set();
     }
 
     createInitialGameState() {
@@ -110,7 +111,8 @@ class GameRoom {
     updateGameState(newState) {
         this.gameState = {
             ...this.gameState,
-            ...newState
+            ...newState,
+            currentOperation: newState.currentOperation // Ensure operation is included
         };
         this.lastActivityTime = Date.now();
         this.broadcastGameState();
@@ -136,6 +138,25 @@ class GameRoom {
 
         return true;
     }
+
+    handleRestartRequest(socketId) {
+        this.pendingRestarts.add(socketId);
+        
+        if (this.pendingRestarts.size === 1) {
+            // Notify opponent about restart request
+            this.notifyOpponent(socketId, 'restart-request', {
+                requester: this.players.get(socketId).name
+            });
+        } else if (this.pendingRestarts.size === 2) {
+            // Reset game state when both agree
+            this.gameState = this.createInitialGameState();
+            this.pendingRestarts.clear();
+            this.broadcastGameState();
+            io.to(this.id).emit('game-restarted');
+        }
+    }
+    
+   
 
     handleGameUpdate(socket, newState) {
         const player = this.players.get(socket.id);
@@ -209,8 +230,12 @@ class GameRoom {
         // Notify opponent of forfeit
         this.notifyOpponent(socketId, 'opponent-forfeit', {
             playerName: player.name,
-            playerColor: player.color
+            playerColor: player.color,
+            winningColor: player.color === 'white' ? 'black' : 'white'
         });
+        setTimeout(() => {
+            this.cleanup();
+        }, 1000);
     }
 
     notifyOpponent(socketId, event, data) {
@@ -281,6 +306,8 @@ io.on('connection', (socket) => {
             const playerColor = gameRoom.addPlayer(socket, playerName);
             
             gameRooms.set(gameId, gameRoom);
+         
+            
     socket.join(gameId);
 
             socket.emit('game-created', {
@@ -376,6 +403,14 @@ io.on('connection', (socket) => {
             console.error('Error handling forfeit:', error);
     }
   });
+    //restart request
+    socket.on('request-restart', ({ gameId }) => {
+        const gameRoom = gameRooms.get(gameId);
+        if (gameRoom) {
+            gameRoom.handleRestartRequest(socket.id);
+        }
+    });
+
 
   socket.on('disconnect', () => {
         try {
