@@ -1,4 +1,5 @@
 // server.js
+const games = new Map();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -140,23 +141,63 @@ class GameRoom {
     }
 
     handleRestartRequest(socketId) {
+        const requester = this.players.get(socketId);
+        if (!requester) return;
+
+        // Add the requester to pending restarts
         this.pendingRestarts.add(socketId);
         
-        if (this.pendingRestarts.size === 1) {
-            // Notify opponent about restart request
-            this.notifyOpponent(socketId, 'restart-request', {
-                requester: this.players.get(socketId).name
-            });
-        } else if (this.pendingRestarts.size === 2) {
-            // Reset game state when both agree
-            this.gameState = this.createInitialGameState();
-            this.pendingRestarts.clear();
-            this.broadcastGameState();
-            io.to(this.id).emit('game-restarted');
+        // Notify the opponent about the restart request
+        this.notifyOpponent(socketId, 'restart-request', {
+            requester: requester.name,
+            playerColor: requester.color
+        });
+    }
+
+    handleRestartAccept(socketId) {
+        const accepter = this.players.get(socketId);
+        if (!accepter) return;
+
+        this.pendingRestarts.add(socketId);
+
+        // If both players have accepted, restart the game
+        if (this.pendingRestarts.size === 2) {
+            this.restartGame();
         }
     }
-    
-   
+
+    handleRestartReject(socketId) {
+        const rejecter = this.players.get(socketId);
+        if (!rejecter) return;
+
+        // Clear pending restarts
+        this.pendingRestarts.clear();
+
+        // Notify the other player about the rejection
+        this.notifyOpponent(socketId, 'restart-rejected', {
+            rejecter: rejecter.name
+        });
+    }
+
+    restartGame() {
+        // Reset game state
+        this.gameState = this.createInitialGameState();
+        this.isFinished = false;
+        this.pendingRestarts.clear();
+
+        // Notify all players about the restart
+        for (const [_, player] of this.players) {
+            if (player.connected) {
+                player.socket.emit('game-restarted', {
+                    message: 'Game has been restarted',
+                    gameState: this.gameState
+                });
+            }
+        }
+
+        // Broadcast the new state
+        this.broadcastGameState();
+    }
 
     handleGameUpdate(socket, newState) {
         const player = this.players.get(socket.id);
@@ -290,25 +331,12 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            // Check if player is already in a game
-            for (const [gameId, gameRoom] of gameRooms.entries()) {
-                const existingPlayer = Array.from(gameRoom.players.values())
-                    .find(p => p.name === playerName && p.connected);
-                
-                if (existingPlayer) {
-                    socket.emit('error', { message: 'You are already in a game' });
-                    return;
-                }
-            }
-
             const gameId = generateGameId();
             const gameRoom = new GameRoom(gameId);
             const playerColor = gameRoom.addPlayer(socket, playerName);
             
             gameRooms.set(gameId, gameRoom);
-         
-            
-    socket.join(gameId);
+            socket.join(gameId);
 
             socket.emit('game-created', {
                 gameId,
@@ -403,14 +431,72 @@ io.on('connection', (socket) => {
             console.error('Error handling forfeit:', error);
     }
   });
-    //restart request
-    socket.on('request-restart', ({ gameId }) => {
-        const gameRoom = gameRooms.get(gameId);
-        if (gameRoom) {
-            gameRoom.handleRestartRequest(socket.id);
+
+    // Handle restart request
+    socket.on('request-restart', (data) => {
+        try {
+            const { gameId } = data;
+            const gameRoom = gameRooms.get(gameId);
+            
+            if (gameRoom) {
+                gameRoom.handleRestartRequest(socket.id);
+            }
+        } catch (error) {
+            console.error('Error handling restart request:', error);
         }
     });
 
+    // Handle restart acceptance
+    socket.on('restart-accepted', (data) => {
+        try {
+            const { gameId } = data;
+            const gameRoom = gameRooms.get(gameId);
+            
+            if (gameRoom) {
+                gameRoom.handleRestartAccept(socket.id);
+            }
+        } catch (error) {
+            console.error('Error handling restart acceptance:', error);
+        }
+    });
+
+    // Handle restart rejection
+    socket.on('restart-rejected', (data) => {
+        try {
+            const { gameId } = data;
+            const gameRoom = gameRooms.get(gameId);
+            
+            if (gameRoom) {
+                gameRoom.handleRestartReject(socket.id);
+            }
+        } catch (error) {
+            console.error('Error handling restart rejection:', error);
+        }
+    });
+
+    // Handle restart cancellation
+    socket.on('restart-cancelled', (data) => {
+        try {
+            const { gameId, playerName } = data;
+            const game = games.get(gameId);
+            
+            if (game) {
+                // Find opponent's socket
+                const opponentSocket = Array.from(game.players).find(
+                    player => player.socket.id !== socket.id
+                );
+
+                if (opponentSocket) {
+                    // Notify opponent that restart request was cancelled
+                    opponentSocket.socket.emit('restart-cancelled', {
+                        playerName
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Error handling restart cancellation:', error);
+        }
+    });
 
   socket.on('disconnect', () => {
         try {
