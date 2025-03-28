@@ -192,7 +192,6 @@ class GameRoom {
         this.gameState = {
             ...this.createInitialGameState(),
             status: 'playing',
-            isMultiplayer: true, // Explicitly set multiplayer flag
             currentPlayers: this.getPlayerList()
         };
 
