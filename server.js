@@ -189,17 +189,21 @@ class GameRoom {
         // Reset game state while preserving player information
         const preservedPlayers = new Map(this.players);
         
-        this.gameState = {
+        // Create new initial game state with multiplayer flag
+        const newGameState = {
             ...this.createInitialGameState(),
             status: 'playing',
+            isMultiplayer: true,
             currentPlayers: this.getPlayerList()
         };
 
+        // Update game state
+        this.gameState = newGameState;
         this.players = preservedPlayers;
         this.isFinished = false;
         this.pendingRestarts.clear();
 
-        // Notify all players about the restart with preserved multiplayer state
+        // Notify all players about the restart
         for (const [_, player] of this.players) {
             if (player.connected) {
                 player.socket.emit('game-restarted', {
@@ -208,6 +212,7 @@ class GameRoom {
                         ...this.gameState,
                         isMultiplayer: true,
                         playerColor: player.color,
+                        playerName: player.name,
                         currentPlayers: this.getPlayerList()
                     }
                 });
