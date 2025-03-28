@@ -163,6 +163,12 @@ class GameRoom {
         // If both players have accepted, restart the game
         if (this.pendingRestarts.size === 2) {
             this.restartGame();
+        } else {
+            // Notify the other player that this player accepted
+            this.notifyOpponent(socketId, 'restart-accepted', {
+                accepter: accepter.name,
+                playerColor: accepter.color
+            });
         }
     }
 
@@ -180,17 +186,31 @@ class GameRoom {
     }
 
     restartGame() {
-        // Reset game state
-        this.gameState = this.createInitialGameState();
+        // Reset game state while preserving player information
+        const preservedPlayers = new Map(this.players);
+        
+        this.gameState = {
+            ...this.createInitialGameState(),
+            status: 'playing',
+            isMultiplayer: true, // Explicitly set multiplayer flag
+            currentPlayers: this.getPlayerList()
+        };
+
+        this.players = preservedPlayers;
         this.isFinished = false;
         this.pendingRestarts.clear();
 
-        // Notify all players about the restart
+        // Notify all players about the restart with preserved multiplayer state
         for (const [_, player] of this.players) {
             if (player.connected) {
                 player.socket.emit('game-restarted', {
                     message: 'Game has been restarted',
-                    gameState: this.gameState
+                    gameState: {
+                        ...this.gameState,
+                        isMultiplayer: true,
+                        playerColor: player.color,
+                        currentPlayers: this.getPlayerList()
+                    }
                 });
             }
         }
