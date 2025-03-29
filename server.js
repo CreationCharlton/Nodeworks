@@ -58,12 +58,36 @@ class GameRoom {
     }
 
     createInitialGameState() {
+        // Create initial piece positions
+        const initialPieces = [
+            // White pieces
+            { value: 1, isWhite: true, position: { row: 0, col: 0 } },
+            { value: 2, isWhite: true, position: { row: 0, col: 2 } },
+            { value: 3, isWhite: true, position: { row: 0, col: 4 } },
+            { value: 4, isWhite: true, position: { row: 0, col: 6 } },
+            { value: 5, isWhite: true, position: { row: 1, col: 1 } },
+            { value: 6, isWhite: true, position: { row: 1, col: 3 } },
+            { value: 7, isWhite: true, position: { row: 1, col: 5 } },
+            { value: 8, isWhite: true, position: { row: 1, col: 7 } },
+            
+            // Black pieces
+            { value: 1, isWhite: false, position: { row: 6, col: 0 } },
+            { value: 2, isWhite: false, position: { row: 6, col: 2 } },
+            { value: 3, isWhite: false, position: { row: 6, col: 4 } },
+            { value: 4, isWhite: false, position: { row: 6, col: 6 } },
+            { value: 5, isWhite: false, position: { row: 7, col: 1 } },
+            { value: 6, isWhite: false, position: { row: 7, col: 3 } },
+            { value: 7, isWhite: false, position: { row: 7, col: 5 } },
+            { value: 8, isWhite: false, position: { row: 7, col: 7 } }
+        ];
+
         return {
             board: {
-                pieces: []
+                pieces: initialPieces
             },
             isWhiteTurn: true,
             status: 'waiting',
+            isMultiplayer: true,
             whiteGoldenStorage: [],
             blackGoldenStorage: [],
             currentPlayers: []
@@ -213,7 +237,10 @@ class GameRoom {
             status: 'playing',
             isMultiplayer: true,
             currentPlayers: this.getPlayerList(),
-            playerColors: Array.from(this.players.values()).map(p => p.color)
+            playerColors: Array.from(this.players.values()).map(p => ({
+                name: p.name,
+                color: p.color
+            }))
         };
 
         // Update game state
@@ -223,7 +250,7 @@ class GameRoom {
         this.pendingRestarts.clear();
         this.lastActivityTime = Date.now();
         
-        // Notify all players about the restart
+        // Notify all players about the restart with complete game state
         for (const [_, player] of this.players) {
             if (player.connected) {
                 player.socket.emit('game-restarted', {
@@ -233,7 +260,8 @@ class GameRoom {
                         isMultiplayer: true,
                         playerColor: player.color,
                         playerName: player.name,
-                        currentPlayers: this.getPlayerList()
+                        currentPlayers: this.getPlayerList(),
+                        board: this.gameState.board // Ensure board is included
                     }
                 });
             }
@@ -263,8 +291,8 @@ class GameRoom {
             return false;
         }
 
-        if (gameRoom.gameState.status === 'finished') {
-            console.log(`Update rejected: Game ${gameId} has already ended`);
+        if (this.gameState.status === 'finished') {
+            console.log(`Update rejected: Game ${this.id} has already ended`);
             return false;
         }
 
