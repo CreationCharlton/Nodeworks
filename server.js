@@ -58,27 +58,38 @@ class GameRoom {
     }
 
     createInitialGameState() {
-        // Create initial piece positions
+        // Helper function to generate random value between 2 and 30
+        const getRandomValue = () => Math.floor(Math.random() * 29) + 2; // 2 to 30 inclusive
+
+        // Create initial piece positions with random values
         const initialPieces = [
-            // White pieces
-            { value: 1, isWhite: true, position: { row: 0, col: 0 } },
-            { value: 2, isWhite: true, position: { row: 0, col: 2 } },
-            { value: 3, isWhite: true, position: { row: 0, col: 4 } },
-            { value: 4, isWhite: true, position: { row: 0, col: 6 } },
-            { value: 5, isWhite: true, position: { row: 1, col: 1 } },
-            { value: 6, isWhite: true, position: { row: 1, col: 3 } },
-            { value: 7, isWhite: true, position: { row: 1, col: 5 } },
-            { value: 8, isWhite: true, position: { row: 1, col: 7 } },
+            // Black pieces (top)
+            { value: getRandomValue(), isWhite: false, position: { row: 0, col: 0 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 0, col: 2 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 0, col: 4 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 0, col: 6 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 1, col: 1 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 1, col: 3 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 1, col: 5 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 1, col: 7 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 2, col: 0 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 2, col: 2 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 2, col: 4 } },
+            { value: getRandomValue(), isWhite: false, position: { row: 2, col: 6 } },
             
-            // Black pieces
-            { value: 1, isWhite: false, position: { row: 6, col: 0 } },
-            { value: 2, isWhite: false, position: { row: 6, col: 2 } },
-            { value: 3, isWhite: false, position: { row: 6, col: 4 } },
-            { value: 4, isWhite: false, position: { row: 6, col: 6 } },
-            { value: 5, isWhite: false, position: { row: 7, col: 1 } },
-            { value: 6, isWhite: false, position: { row: 7, col: 3 } },
-            { value: 7, isWhite: false, position: { row: 7, col: 5 } },
-            { value: 8, isWhite: false, position: { row: 7, col: 7 } }
+            // White pieces (bottom)
+            { value: getRandomValue(), isWhite: true, position: { row: 7, col: 0 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 7, col: 2 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 7, col: 4 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 7, col: 6 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 6, col: 1 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 6, col: 3 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 6, col: 5 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 6, col: 7 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 5, col: 0 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 5, col: 2 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 5, col: 4 } },
+            { value: getRandomValue(), isWhite: true, position: { row: 5, col: 6 } }
         ];
 
         return {
@@ -203,8 +214,12 @@ class GameRoom {
 
         // If both players have accepted, restart the game
         if (this.pendingRestarts.size === 2) {
-            // Send a special update to trigger restart
-            this.updateGameState({ isRestart: true });
+            console.log(`Both players accepted restart in game ${this.id}`);
+            // Send a special update to trigger restart while preserving session
+            this.updateGameState({ 
+                isRestart: true,
+                preserveSession: true
+            });
         } else {
             // Notify the other player that this player accepted
             this.notifyOpponent(socketId, 'restart-accepted', {
@@ -228,47 +243,54 @@ class GameRoom {
     }
 
     restartGame() {
-        // Reset game state while preserving player information
+        // Preserve the current players and their information
         const preservedPlayers = new Map(this.players);
         
-        // Create new initial game state with multiplayer flag
+        // Create new game state but keep player information
         const newGameState = {
-            ...this.createInitialGameState(),
+            ...this.createInitialGameState(), // This creates new random pieces
             status: 'playing',
             isMultiplayer: true,
             currentPlayers: this.getPlayerList(),
-            playerColors: Array.from(this.players.values()).map(p => ({
+            // Keep track of player colors explicitly
+            playerColors: Array.from(preservedPlayers.values()).map(p => ({
                 name: p.name,
                 color: p.color
             }))
         };
 
-        // Update game state
+        // Update game state while preserving player connections
         this.gameState = newGameState;
-        this.players = preservedPlayers;
+        this.players = preservedPlayers; // Restore the original player connections
         this.isFinished = false;
         this.pendingRestarts.clear();
         this.lastActivityTime = Date.now();
         
-        // Notify all players about the restart with complete game state
+        // Notify each player about the restart with their specific information
         for (const [_, player] of this.players) {
             if (player.connected) {
+                const playerSpecificState = {
+                    ...this.gameState,
+                    isMultiplayer: true,
+                    playerColor: player.color, // Ensure each player keeps their color
+                    playerName: player.name,
+                    currentPlayers: this.getPlayerList(),
+                    gameId: this.id, // Keep the same game ID
+                    board: this.gameState.board // New board with new random pieces
+                };
+
+                // Send the restart notification with player-specific state
                 player.socket.emit('game-restarted', {
                     message: 'Game has been restarted',
-                    gameState: {
-                        ...this.gameState,
-                        isMultiplayer: true,
-                        playerColor: player.color,
-                        playerName: player.name,
-                        currentPlayers: this.getPlayerList(),
-                        board: this.gameState.board // Ensure board is included
-                    }
+                    gameState: playerSpecificState
                 });
             }
         }
 
-        // Broadcast the new state
+        // Broadcast the new state to ensure synchronization
         this.broadcastGameState();
+
+        console.log(`Game ${this.id} restarted with preserved player sessions`);
     }
 
     handleGameUpdate(socket, newState) {
