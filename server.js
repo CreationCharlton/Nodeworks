@@ -110,11 +110,28 @@ class GameRoom {
     }
 
     updateGameState(newState) {
+        // Check if this is a restart update
+        if (newState.isRestart) {
+            this.restartGame();
+            return;
+        }
+
+        // Save player information before update
+        const preservedPlayers = new Map(this.players);
+        
+        // Update game state
         this.gameState = {
             ...this.gameState,
             ...newState,
-            currentOperation: newState.currentOperation // Ensure operation is included
+            currentOperation: newState.currentOperation,
+            isMultiplayer: true, // Always preserve multiplayer flag
+            status: newState.status || this.gameState.status,
+            currentPlayers: this.getPlayerList()
         };
+
+        // Restore player information
+        this.players = preservedPlayers;
+        
         this.lastActivityTime = Date.now();
         this.broadcastGameState();
     }
@@ -162,7 +179,8 @@ class GameRoom {
 
         // If both players have accepted, restart the game
         if (this.pendingRestarts.size === 2) {
-            this.restartGame();
+            // Send a special update to trigger restart
+            this.updateGameState({ isRestart: true });
         } else {
             // Notify the other player that this player accepted
             this.notifyOpponent(socketId, 'restart-accepted', {
