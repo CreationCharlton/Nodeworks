@@ -212,7 +212,8 @@ class GameRoom {
             ...this.createInitialGameState(),
             status: 'playing',
             isMultiplayer: true,
-            currentPlayers: this.getPlayerList()
+            currentPlayers: this.getPlayerList(),
+            playerColors: Array.from(this.players.values()).map(p => p.color)
         };
 
         // Update game state
@@ -220,7 +221,8 @@ class GameRoom {
         this.players = preservedPlayers;
         this.isFinished = false;
         this.pendingRestarts.clear();
-
+        this.lastActivityTime = Date.now();
+        
         // Notify all players about the restart
         for (const [_, player] of this.players) {
             if (player.connected) {
@@ -258,6 +260,11 @@ class GameRoom {
 
         if (!isCorrectTurn) {
             console.log(`Update rejected: Not player's turn in game ${this.id}`);
+            return false;
+        }
+
+        if (gameRoom.gameState.status === 'finished') {
+            console.log(`Update rejected: Game ${gameId} has already ended`);
             return false;
         }
 
