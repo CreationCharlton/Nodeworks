@@ -204,22 +204,24 @@ class GameRoom {
     }
 
     restartGame() {
-        // Reset game state while preserving player information
+        // Preserve the current players and their information
         const preservedPlayers = new Map(this.players);
         
-        // Create new initial game state with multiplayer flag
+        // Create new game state with random pieces but keep multiplayer info
         const newGameState = {
             ...this.createInitialGameState(),
             status: 'playing',
             isMultiplayer: true,
-            currentPlayers: this.getPlayerList()
+            currentPlayers: this.getPlayerList(),
+            gameId: this.id // Keep the same game ID
         };
 
-        // Update game state
+        // Update game state while preserving player connections
         this.gameState = newGameState;
         this.players = preservedPlayers;
         this.isFinished = false;
         this.pendingRestarts.clear();
+        this.lastActivityTime = Date.now();
 
         // Notify all players about the restart
         for (const [_, player] of this.players) {
@@ -231,14 +233,16 @@ class GameRoom {
                         isMultiplayer: true,
                         playerColor: player.color,
                         playerName: player.name,
-                        currentPlayers: this.getPlayerList()
+                        currentPlayers: this.getPlayerList(),
+                        gameId: this.id
                     }
                 });
             }
         }
 
-        // Broadcast the new state
+        // Broadcast the new state to ensure synchronization
         this.broadcastGameState();
+        console.log(`Game ${this.id} restarted with preserved player sessions`);
     }
 
     handleGameUpdate(socket, newState) {
@@ -253,6 +257,12 @@ class GameRoom {
             return false;
         }
 
+        // Check for win condition
+        if (newState.winner) {
+            this.handleWin(player, newState.winner);
+            return true;
+        }
+
         const isCorrectTurn = (this.gameState.isWhiteTurn && player.color === 'white') ||
                             (!this.gameState.isWhiteTurn && player.color === 'black');
 
@@ -263,6 +273,30 @@ class GameRoom {
 
         this.updateGameState(newState);
         return true;
+    }
+
+    handleWin(player, winner) {
+        this.isFinished = true;
+        
+        // Notify all players about the win
+        for (const [_, p] of this.players) {
+            if (p.connected) {
+                p.socket.emit('game-won', {
+                    winner: winner,
+                    winnerName: player.name,
+                    message: `${player.name} has won the game!`
+                });
+            }
+        }
+
+        // Set a timeout to return to menu
+        setTimeout(() => {
+            for (const [_, p] of this.players) {
+                if (p.connected) {
+                    p.socket.emit('return-to-menu');
+                }
+            }
+        }, 10000); // 10 seconds delay before returning to menu
     }
 
     broadcastGameState() {
@@ -310,15 +344,34 @@ class GameRoom {
 
         this.isFinished = true;
         
-        // Notify opponent of forfeit
-        this.notifyOpponent(socketId, 'opponent-forfeit', {
-            playerName: player.name,
-            playerColor: player.color,
-            winningColor: player.color === 'white' ? 'black' : 'white'
-        });
+        // Notify all players about the forfeit
+        for (const [_, p] of this.players) {
+            if (p.connected) {
+                if (p.socket.id === socketId) {
+                    // Forfeiting player
+                    p.socket.emit('game-forfeited', {
+                        message: 'You forfeited the game'
+                    });
+                } else {
+                    // Opponent
+                    p.socket.emit('opponent-forfeit', {
+                        playerName: player.name,
+                        playerColor: player.color,
+                        message: `${player.name} has forfeited the game`
+                    });
+                }
+            }
+        }
+
+        // Return both players to menu after a short delay
         setTimeout(() => {
+            for (const [_, p] of this.players) {
+                if (p.connected) {
+                    p.socket.emit('return-to-menu');
+                }
+            }
             this.cleanup();
-        }, 1000);
+        }, 3000);
     }
 
     notifyOpponent(socketId, event, data) {
@@ -334,9 +387,11 @@ class GameRoom {
     }
 
     cleanup() {
+        // Notify all players before cleanup
         for (const [_, player] of this.players) {
             if (player.connected) {
-                player.socket.disconnect(true);
+                player.socket.emit('return-to-menu');
+                player.socket.leave(this.id); // Leave the room
             }
         }
         this.players.clear();
@@ -537,6 +592,17 @@ io.on('connection', (socket) => {
             }
         } catch (error) {
             console.error('Error handling restart cancellation:', error);
+        }
+    });
+
+    socket.on('game-won', ({ gameId, winner }) => {
+        try {
+            const gameRoom = gameRooms.get(gameId);
+            if (gameRoom) {
+                gameRoom.handleWin(gameRoom.players.get(socket.id), winner);
+            }
+        } catch (error) {
+            console.error('Error handling game win:', error);
         }
     });
 
