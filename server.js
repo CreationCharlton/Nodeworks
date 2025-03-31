@@ -58,50 +58,15 @@ class GameRoom {
     }
 
     createInitialGameState() {
-        // Create initial board with pieces
-        const pieces = [];
-        
-        // Helper function to get random value between 2 and 30
-        const getRandomValue = () => Math.floor(Math.random() * 29) + 2;
-
-        // Set up black pieces (top)
-        for (let row = 0; row < 3; row++) {
-            for (let col = (row % 2 === 0 ? 1 : 0); col < 8; col += 2) {
-                pieces.push({
-                    value: getRandomValue(),
-                    isWhite: false,
-                    position: {
-                        row: row,
-                        col: col
-                    }
-                });
-            }
-        }
-
-        // Set up white pieces (bottom)
-        for (let row = 5; row < 8; row++) {
-            for (let col = (row % 2 === 0 ? 1 : 0); col < 8; col += 2) {
-                pieces.push({
-                    value: getRandomValue(),
-                    isWhite: true,
-                    position: {
-                        row: row,
-                        col: col
-                    }
-                });
-            }
-        }
-
         return {
             board: {
-                pieces: pieces
+                pieces: []
             },
             isWhiteTurn: true,
             status: 'waiting',
             whiteGoldenStorage: [],
             blackGoldenStorage: [],
-            currentPlayers: [],
-            isMultiplayer: true
+            currentPlayers: []
         };
     }
 
@@ -117,12 +82,6 @@ class GameRoom {
 
         const isFirstPlayer = this.players.size === 0;
         const playerColor = isFirstPlayer ? 'white' : 'black';
-
-        // If this is the second player joining, ensure they get the current board state
-        if (!isFirstPlayer && this.gameState.board.pieces.length === 0) {
-            // Initialize the board if it's empty
-            this.gameState = this.createInitialGameState();
-        }
 
         this.players.set(socket.id, {
             socket,
@@ -151,48 +110,37 @@ class GameRoom {
     }
 
     updateGameState(newState) {
-        try {
-            // Check if this is a restart update
-            if (newState.isRestart) {
-                this.restartGame();
-                return;
-            }
-
-            // Save player information before update
-            const preservedPlayers = new Map(this.players);
-            
-            // Update game state
-            this.gameState = {
-                ...this.gameState,
-                ...newState,
-                board: newState.board,
-                isWhiteTurn: newState.isWhiteTurn,
-                whiteGoldenStorage: newState.whiteGoldenStorage,
-                blackGoldenStorage: newState.blackGoldenStorage,
-                currentOperation: newState.currentOperation,
-                lastMove: newState.lastMove, // Add this to track last move
-                isMultiplayer: true // Always preserve multiplayer flag
-            };
-
-            // Restore player information
-            this.players = preservedPlayers;
-            
-            // Update last activity time
-            this.lastActivityTime = Date.now();
-
-            // Broadcast the updated state to all players
-            this.broadcastGameState();
-
-            // Log the update for debugging
-            console.log('Game state updated:', {
-                gameId: this.id,
-                playersCount: this.players.size,
-                lastMove: this.gameState.lastMove,
-                isWhiteTurn: this.gameState.isWhiteTurn
-            });
-        } catch (error) {
-            console.error('Error updating game state:', error);
+        // Check if this is a restart update
+        if (newState.isRestart) {
+            this.restartGame();
+            return;
         }
+
+        if (newState.board.pieces) {
+            this.lastMove = newState.board.pieces
+                .find(p => !this.gameState.board.pieces.some(op => 
+                    op.position.row === p.position.row && 
+                    op.position.col === p.position.col
+                ));
+        }
+        // Save player information before update
+        const preservedPlayers = new Map(this.players);
+        
+        // Update game state
+        this.gameState = {
+            ...this.gameState,
+            ...newState,
+            currentOperation: newState.currentOperation,
+            isMultiplayer: true, // Always preserve multiplayer flag
+            status: newState.status || this.gameState.status,
+            currentPlayers: this.getPlayerList()
+        };
+
+        // Restore player information
+        this.players = preservedPlayers;
+        
+        this.lastActivityTime = Date.now();
+        this.broadcastGameState();
     }
 
     validateGameState(state) {
@@ -237,15 +185,14 @@ class GameRoom {
         this.pendingRestarts.add(socketId);
 
         // If both players have accepted, restart the game
-        if (this.pendingRestarts.size === 2) {
-            // Send a special update to trigger restart
-            this.updateGameState({ isRestart: true });
-        } else {
-            // Notify the other player that this player accepted
+        if (this.pendingRestarts.size === 1) {
             this.notifyOpponent(socketId, 'restart-accepted', {
-                accepter: accepter.name,
-                playerColor: accepter.color
+                accepter: this.players.get(socketId).name
             });
+        
+        } 
+        if (this.pendingRestarts.size === 2) {
+            this.restartGame();
         }
     }
 
@@ -263,50 +210,41 @@ class GameRoom {
     }
 
     restartGame() {
-        try {
-            // Preserve the current players and their information
-            const preservedPlayers = new Map(this.players);
-            
-            // Create new initial game state
-            const newGameState = {
-                ...this.createInitialGameState(),
-                status: 'playing',
-                isMultiplayer: true,
-                currentPlayers: this.getPlayerList(),
-                gameId: this.id // Keep the same game ID
-            };
+        // Reset game state while preserving player information
+        const preservedPlayers = new Map(this.players);
+        
+        // Create new initial game state with multiplayer flag
+        const newGameState = {
+            ...this.createInitialGameState(),
+            status: 'playing',
+            isMultiplayer: true,
+            currentPlayers: this.getPlayerList()
+        };
 
-            // Update game state while preserving player connections
-            this.gameState = newGameState;
-            this.players = preservedPlayers;
-            this.isFinished = false;
-            this.pendingRestarts.clear();
-            this.lastActivityTime = Date.now();
+        // Update game state
+        this.gameState = newGameState;
+        this.players = preservedPlayers;
+        this.isFinished = false;
+        this.pendingRestarts.clear();
 
-            // Notify all players about the restart
-            for (const [_, player] of this.players) {
-                if (player.connected) {
-                    player.socket.emit('game-restarted', {
-                        message: 'Game has been restarted',
-                        gameState: {
-                            ...this.gameState,
-                            isMultiplayer: true,
-                            playerColor: player.color,
-                            playerName: player.name,
-                            currentPlayers: this.getPlayerList(),
-                            gameId: this.id
-                        }
-                    });
-                }
+        // Notify all players about the restart
+        for (const [_, player] of this.players) {
+            if (player.connected) {
+                player.socket.emit('game-restarted', {
+                    message: 'Game has been restarted',
+                    gameState: {
+                        ...this.gameState,
+                        isMultiplayer: true,
+                        playerColor: player.color,
+                        playerName: player.name,
+                        currentPlayers: this.getPlayerList()
+                    }
+                });
             }
-
-            // Broadcast the new state to ensure synchronization
-            this.broadcastGameState();
-            
-            console.log(`Game ${this.id} restarted with preserved player sessions`);
-        } catch (error) {
-            console.error('Error restarting game:', error);
         }
+
+        // Broadcast the new state
+        this.broadcastGameState();
     }
 
     handleGameUpdate(socket, newState) {
@@ -321,12 +259,6 @@ class GameRoom {
             return false;
         }
 
-        // Check for win condition
-        if (newState.winner) {
-            this.handleWin(player, newState.winner);
-            return true;
-        }
-
         const isCorrectTurn = (this.gameState.isWhiteTurn && player.color === 'white') ||
                             (!this.gameState.isWhiteTurn && player.color === 'black');
 
@@ -339,44 +271,16 @@ class GameRoom {
         return true;
     }
 
-    handleWin(player, winner) {
-        this.isFinished = true;
-        
-        // Notify all players about the win
-        for (const [_, p] of this.players) {
-            if (p.connected) {
-                p.socket.emit('game-won', {
-                    winner: winner,
-                    winnerName: player.name,
-                    message: `${player.name} has won the game!`
-                });
-            }
-        }
-
-        // Set a timeout to return to menu
-        setTimeout(() => {
-            for (const [_, p] of this.players) {
-                if (p.connected) {
-                    p.socket.emit('return-to-menu');
-                }
-            }
-        }, 10000); // 10 seconds delay before returning to menu
-    }
-
     broadcastGameState() {
         const stateToSend = {
             ...this.gameState,
-            currentPlayers: this.getPlayerList(),
-            lastMove: this.gameState.lastMove // Ensure last move is included
+            lastMove: this.lastMove,
+            currentPlayers: this.getPlayerList()
         };
 
         for (const [_, player] of this.players) {
             if (player.connected) {
-                player.socket.emit('game-state', {
-                    ...stateToSend,
-                    playerColor: player.color, // Include player-specific information
-                    playerName: player.name
-                });
+                player.socket.emit('game-state', stateToSend);
             }
         }
     }
@@ -412,35 +316,24 @@ class GameRoom {
         if (!player) return;
 
         this.isFinished = true;
+        this.gameState.status = 'finished';
         
-        // Notify all players about the forfeit
-        for (const [_, p] of this.players) {
-            if (p.connected) {
-                if (p.socket.id === socketId) {
-                    // Forfeiting player
-                    p.socket.emit('game-forfeited', {
-                        message: 'You forfeited the game'
-                    });
-                } else {
-                    // Opponent
-                    p.socket.emit('opponent-forfeit', {
-                        playerName: player.name,
-                        playerColor: player.color,
-                        message: `${player.name} has forfeited the game`
-                    });
-                }
-            }
-        }
+        // Notify opponent of forfeit
+        this.notifyOpponent(socketId, 'opponent-forfeit', {
+            playerName: player.name,
+            playerColor: player.color,
+            winningColor: player.color === 'white' ? 'black' : 'white'
+        });
 
-        // Return both players to menu after a short delay
+        // Notify both players
+        io.to(this.id).emit('game-over', {
+            winner: player.color === 'white' ? 'black' : 'white',
+            byForfeit: true
+        });
+
         setTimeout(() => {
-            for (const [_, p] of this.players) {
-                if (p.connected) {
-                    p.socket.emit('return-to-menu');
-                }
-            }
             this.cleanup();
-        }, 3000);
+        }, 1000);
     }
 
     notifyOpponent(socketId, event, data) {
@@ -456,11 +349,9 @@ class GameRoom {
     }
 
     cleanup() {
-        // Notify all players before cleanup
         for (const [_, player] of this.players) {
             if (player.connected) {
-                player.socket.emit('return-to-menu');
-                player.socket.leave(this.id); // Leave the room
+                player.socket.disconnect(true);
             }
         }
         this.players.clear();
@@ -478,6 +369,7 @@ function generateGameId() {
 
 function cleanupStaleGames() {
     for (const [gameId, gameRoom] of gameRooms.entries()) {
+        const timeSinceEnd = Date.now() - gameRoom.lastActivityTime;
         if (gameRoom.isFinished || gameRoom.isStale()) {
             console.log(`Cleaning up game room ${gameId}`);
             gameRoom.cleanup();
@@ -545,19 +437,13 @@ io.on('connection', (socket) => {
             const playerColor = gameRoom.addPlayer(socket, playerName);
             socket.join(cleanGameId);
 
-            // Send the complete game state to the joining player
             socket.emit('game-joined', {
                 gameId: cleanGameId,
                 playerColor,
-                gameState: {
-                    ...gameRoom.gameState,
-                    isMultiplayer: true,
-                    playerColor: playerColor,
-                    playerName: playerName
-                }
+                gameState: gameRoom.gameState
             });
 
-            // Notify all players about the new player
+            // Notify all players
             io.to(cleanGameId).emit('player-joined', {
                 gameId: cleanGameId,
                 players: gameRoom.getPlayerList(),
@@ -670,17 +556,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('game-won', ({ gameId, winner }) => {
-        try {
-            const gameRoom = gameRooms.get(gameId);
-            if (gameRoom) {
-                gameRoom.handleWin(gameRoom.players.get(socket.id), winner);
-            }
-        } catch (error) {
-            console.error('Error handling game win:', error);
-        }
-    });
-
   socket.on('disconnect', () => {
         try {
             console.log(`Client disconnected: ${socket.id}`);
@@ -700,7 +575,9 @@ io.on('connection', (socket) => {
         } catch (error) {
             console.error('Error handling disconnect:', error);
         }
-  });
+    });
+    
+    
 });
 
 // Cleanup interval
