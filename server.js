@@ -58,15 +58,50 @@ class GameRoom {
     }
 
     createInitialGameState() {
+        // Create initial board with pieces
+        const pieces = [];
+        
+        // Helper function to get random value between 2 and 30
+        const getRandomValue = () => Math.floor(Math.random() * 29) + 2;
+
+        // Set up black pieces (top)
+        for (let row = 0; row < 3; row++) {
+            for (let col = (row % 2 === 0 ? 1 : 0); col < 8; col += 2) {
+                pieces.push({
+                    value: getRandomValue(),
+                    isWhite: false,
+                    position: {
+                        row: row,
+                        col: col
+                    }
+                });
+            }
+        }
+
+        // Set up white pieces (bottom)
+        for (let row = 5; row < 8; row++) {
+            for (let col = (row % 2 === 0 ? 1 : 0); col < 8; col += 2) {
+                pieces.push({
+                    value: getRandomValue(),
+                    isWhite: true,
+                    position: {
+                        row: row,
+                        col: col
+                    }
+                });
+            }
+        }
+
         return {
             board: {
-                pieces: []
+                pieces: pieces
             },
             isWhiteTurn: true,
             status: 'waiting',
             whiteGoldenStorage: [],
             blackGoldenStorage: [],
-            currentPlayers: []
+            currentPlayers: [],
+            isMultiplayer: true
         };
     }
 
@@ -82,6 +117,12 @@ class GameRoom {
 
         const isFirstPlayer = this.players.size === 0;
         const playerColor = isFirstPlayer ? 'white' : 'black';
+
+        // If this is the second player joining, ensure they get the current board state
+        if (!isFirstPlayer && this.gameState.board.pieces.length === 0) {
+            // Initialize the board if it's empty
+            this.gameState = this.createInitialGameState();
+        }
 
         this.players.set(socket.id, {
             socket,
@@ -504,13 +545,19 @@ io.on('connection', (socket) => {
             const playerColor = gameRoom.addPlayer(socket, playerName);
             socket.join(cleanGameId);
 
+            // Send the complete game state to the joining player
             socket.emit('game-joined', {
                 gameId: cleanGameId,
                 playerColor,
-                gameState: gameRoom.gameState
+                gameState: {
+                    ...gameRoom.gameState,
+                    isMultiplayer: true,
+                    playerColor: playerColor,
+                    playerName: playerName
+                }
             });
 
-            // Notify all players
+            // Notify all players about the new player
             io.to(cleanGameId).emit('player-joined', {
                 gameId: cleanGameId,
                 players: gameRoom.getPlayerList(),
