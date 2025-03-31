@@ -110,30 +110,48 @@ class GameRoom {
     }
 
     updateGameState(newState) {
-        // Check if this is a restart update
-        if (newState.isRestart) {
-            this.restartGame();
-            return;
+        try {
+            // Check if this is a restart update
+            if (newState.isRestart) {
+                this.restartGame();
+                return;
+            }
+
+            // Save player information before update
+            const preservedPlayers = new Map(this.players);
+            
+            // Update game state
+            this.gameState = {
+                ...this.gameState,
+                ...newState,
+                board: newState.board,
+                isWhiteTurn: newState.isWhiteTurn,
+                whiteGoldenStorage: newState.whiteGoldenStorage,
+                blackGoldenStorage: newState.blackGoldenStorage,
+                currentOperation: newState.currentOperation,
+                lastMove: newState.lastMove, // Add this to track last move
+                isMultiplayer: true // Always preserve multiplayer flag
+            };
+
+            // Restore player information
+            this.players = preservedPlayers;
+            
+            // Update last activity time
+            this.lastActivityTime = Date.now();
+
+            // Broadcast the updated state to all players
+            this.broadcastGameState();
+
+            // Log the update for debugging
+            console.log('Game state updated:', {
+                gameId: this.id,
+                playersCount: this.players.size,
+                lastMove: this.gameState.lastMove,
+                isWhiteTurn: this.gameState.isWhiteTurn
+            });
+        } catch (error) {
+            console.error('Error updating game state:', error);
         }
-
-        // Save player information before update
-        const preservedPlayers = new Map(this.players);
-        
-        // Update game state
-        this.gameState = {
-            ...this.gameState,
-            ...newState,
-            currentOperation: newState.currentOperation,
-            isMultiplayer: true, // Always preserve multiplayer flag
-            status: newState.status || this.gameState.status,
-            currentPlayers: this.getPlayerList()
-        };
-
-        // Restore player information
-        this.players = preservedPlayers;
-        
-        this.lastActivityTime = Date.now();
-        this.broadcastGameState();
     }
 
     validateGameState(state) {
@@ -204,45 +222,50 @@ class GameRoom {
     }
 
     restartGame() {
-        // Preserve the current players and their information
-        const preservedPlayers = new Map(this.players);
-        
-        // Create new game state with random pieces but keep multiplayer info
-        const newGameState = {
-            ...this.createInitialGameState(),
-            status: 'playing',
-            isMultiplayer: true,
-            currentPlayers: this.getPlayerList(),
-            gameId: this.id // Keep the same game ID
-        };
+        try {
+            // Preserve the current players and their information
+            const preservedPlayers = new Map(this.players);
+            
+            // Create new initial game state
+            const newGameState = {
+                ...this.createInitialGameState(),
+                status: 'playing',
+                isMultiplayer: true,
+                currentPlayers: this.getPlayerList(),
+                gameId: this.id // Keep the same game ID
+            };
 
-        // Update game state while preserving player connections
-        this.gameState = newGameState;
-        this.players = preservedPlayers;
-        this.isFinished = false;
-        this.pendingRestarts.clear();
-        this.lastActivityTime = Date.now();
+            // Update game state while preserving player connections
+            this.gameState = newGameState;
+            this.players = preservedPlayers;
+            this.isFinished = false;
+            this.pendingRestarts.clear();
+            this.lastActivityTime = Date.now();
 
-        // Notify all players about the restart
-        for (const [_, player] of this.players) {
-            if (player.connected) {
-                player.socket.emit('game-restarted', {
-                    message: 'Game has been restarted',
-                    gameState: {
-                        ...this.gameState,
-                        isMultiplayer: true,
-                        playerColor: player.color,
-                        playerName: player.name,
-                        currentPlayers: this.getPlayerList(),
-                        gameId: this.id
-                    }
-                });
+            // Notify all players about the restart
+            for (const [_, player] of this.players) {
+                if (player.connected) {
+                    player.socket.emit('game-restarted', {
+                        message: 'Game has been restarted',
+                        gameState: {
+                            ...this.gameState,
+                            isMultiplayer: true,
+                            playerColor: player.color,
+                            playerName: player.name,
+                            currentPlayers: this.getPlayerList(),
+                            gameId: this.id
+                        }
+                    });
+                }
             }
-        }
 
-        // Broadcast the new state to ensure synchronization
-        this.broadcastGameState();
-        console.log(`Game ${this.id} restarted with preserved player sessions`);
+            // Broadcast the new state to ensure synchronization
+            this.broadcastGameState();
+            
+            console.log(`Game ${this.id} restarted with preserved player sessions`);
+        } catch (error) {
+            console.error('Error restarting game:', error);
+        }
     }
 
     handleGameUpdate(socket, newState) {
@@ -302,12 +325,17 @@ class GameRoom {
     broadcastGameState() {
         const stateToSend = {
             ...this.gameState,
-            currentPlayers: this.getPlayerList()
+            currentPlayers: this.getPlayerList(),
+            lastMove: this.gameState.lastMove // Ensure last move is included
         };
 
         for (const [_, player] of this.players) {
             if (player.connected) {
-                player.socket.emit('game-state', stateToSend);
+                player.socket.emit('game-state', {
+                    ...stateToSend,
+                    playerColor: player.color, // Include player-specific information
+                    playerName: player.name
+                });
             }
         }
     }
