@@ -53,8 +53,13 @@ class GameRoom {
         this.isFinished = false;
         this.lastActivityTime = Date.now();
         this.inactivityTimeout = 30 * 60 * 1000; // 30 minutes
-        console.log(`Created new game room: ${id}`);
         this.pendingRestarts = new Set();
+        
+        // Ensure gameId is part of the game state
+        this.gameState.gameId = id;
+        this.gameState.isMultiplayer = true;
+        
+        console.log(`Created new game room: ${id}`);
     }
 
     createInitialGameState() {
@@ -66,7 +71,9 @@ class GameRoom {
             status: 'waiting',
             whiteGoldenStorage: [],
             blackGoldenStorage: [],
-            currentPlayers: []
+            currentPlayers: [],
+            gameId: this.id,
+            isMultiplayer: true
         };
     }
 
@@ -363,8 +370,13 @@ class GameRoom {
 const gameRooms = new Map();
 
 function generateGameId() {
-    const id = Math.random().toString(36).substring(2, 7).toUpperCase();
-    return gameRooms.has(id) ? generateGameId() : id;
+    let id;
+    do {
+        id = Math.random().toString(36).substring(2, 7).toUpperCase();
+    } while (gameRooms.has(id));
+    
+    console.log('Generated new game ID:', id);
+    return id;
 }
 
 function cleanupStaleGames() {
@@ -390,19 +402,27 @@ io.on('connection', (socket) => {
             }
 
             const gameId = generateGameId();
+            console.log(`Creating new game with ID: ${gameId}`);
+
             const gameRoom = new GameRoom(gameId);
             const playerColor = gameRoom.addPlayer(socket, playerName);
             
             gameRooms.set(gameId, gameRoom);
             socket.join(gameId);
 
+            // Emit game creation event with all necessary information
             socket.emit('game-created', {
-                gameId,
-                playerColor,
-                gameState: gameRoom.gameState
+                gameId: gameId,
+                playerColor: playerColor,
+                playerName: playerName,
+                gameState: {
+                    ...gameRoom.gameState,
+                    isMultiplayer: true,
+                    gameId: gameId
+                }
             });
 
-            console.log(`Created game ${gameId} for player ${playerName}`);
+            console.log(`Created game ${gameId} for player ${playerName} (${playerColor})`);
         } catch (error) {
             console.error('Error creating game:', error);
             socket.emit('error', { message: 'Failed to create game' });
