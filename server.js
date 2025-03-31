@@ -410,7 +410,13 @@ io.on('connection', (socket) => {
             gameRooms.set(gameId, gameRoom);
             socket.join(gameId);
 
-            // Emit game creation event with all necessary information
+            // First, emit the game ID separately to ensure it's displayed
+            socket.emit('game-id-generated', {
+                gameId: gameId,
+                message: `Your Game ID is: ${gameId}`
+            });
+
+            // Then emit the full game creation event
             socket.emit('game-created', {
                 gameId: gameId,
                 playerColor: playerColor,
