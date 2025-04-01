@@ -53,13 +53,8 @@ class GameRoom {
         this.isFinished = false;
         this.lastActivityTime = Date.now();
         this.inactivityTimeout = 30 * 60 * 1000; // 30 minutes
-        this.pendingRestarts = new Set();
-        
-        // Ensure gameId is part of the game state
-        this.gameState.gameId = id;
-        this.gameState.isMultiplayer = true;
-        
         console.log(`Created new game room: ${id}`);
+        this.pendingRestarts = new Set();
     }
 
     createInitialGameState() {
@@ -71,9 +66,7 @@ class GameRoom {
             status: 'waiting',
             whiteGoldenStorage: [],
             blackGoldenStorage: [],
-            currentPlayers: [],
-            gameId: this.id,
-            isMultiplayer: true
+            currentPlayers: []
         };
     }
 
@@ -117,36 +110,49 @@ class GameRoom {
     }
 
     updateGameState(newState) {
-        // Check if this is a restart update
-        if (newState.isRestart) {
-            this.restartGame();
-            return;
+        // Track the last move by comparing piece positions
+        if (newState.board && newState.board.pieces) {
+            const oldPositions = this.gameState.board.pieces.map(p => ({
+                row: p.position.row,
+                col: p.position.col
+            }));
+            
+            const newPositions = newState.board.pieces.map(p => ({
+                row: p.position.row,
+                col: p.position.col
+            }));
+
+            // Find the piece that moved
+            const movedPiece = newState.board.pieces.find(p => {
+                const oldPos = oldPositions.find(op => 
+                    p.value === this.gameState.board.pieces[oldPositions.indexOf(op)].value &&
+                    p.isWhite === this.gameState.board.pieces[oldPositions.indexOf(op)].isWhite
+                );
+                return oldPos && (p.position.row !== oldPos.row || p.position.col !== oldPos.col);
+            });
+
+            if (movedPiece) {
+                this.lastMove = {
+                    piece: movedPiece,
+                    from: oldPositions.find(op => 
+                        !newPositions.some(np => np.row === op.row && np.col === op.col)
+                    ),
+                    to: {
+                        row: movedPiece.position.row,
+                        col: movedPiece.position.col
+                    }
+                };
+            }
         }
 
-        if (newState.board.pieces) {
-            this.lastMove = newState.board.pieces
-                .find(p => !this.gameState.board.pieces.some(op => 
-                    op.position.row === p.position.row && 
-                    op.position.col === p.position.col
-                ));
-        }
-        // Save player information before update
-        const preservedPlayers = new Map(this.players);
-        
         // Update game state
         this.gameState = {
             ...this.gameState,
             ...newState,
-            currentOperation: newState.currentOperation,
-            isMultiplayer: true, // Always preserve multiplayer flag
-            status: newState.status || this.gameState.status,
-            currentPlayers: this.getPlayerList()
+            lastMove: this.lastMove,
+            isMultiplayer: true
         };
 
-        // Restore player information
-        this.players = preservedPlayers;
-        
-        this.lastActivityTime = Date.now();
         this.broadcastGameState();
     }
 
@@ -192,14 +198,46 @@ class GameRoom {
         this.pendingRestarts.add(socketId);
 
         // If both players have accepted, restart the game
-        if (this.pendingRestarts.size === 1) {
-            this.notifyOpponent(socketId, 'restart-accepted', {
-                accepter: this.players.get(socketId).name
-            });
-        
-        } 
         if (this.pendingRestarts.size === 2) {
-            this.restartGame();
+            // Create new game state while preserving player information
+            const preservedPlayers = new Map(this.players);
+            
+            // Create new initial game state
+            const newGameState = {
+                ...this.createInitialGameState(),
+                status: 'playing',
+                isMultiplayer: true,
+                gameId: this.id, // Keep the same game ID
+                currentPlayers: this.getPlayerList()
+            };
+
+            // Update game state
+            this.gameState = newGameState;
+            this.players = preservedPlayers;
+            this.isFinished = false;
+            this.pendingRestarts.clear();
+
+            // Notify all players about the restart with their specific state
+            for (const [_, player] of this.players) {
+                if (player.connected) {
+                    player.socket.emit('game-restarted', {
+                        message: 'Game has been restarted',
+                        gameState: {
+                            ...this.gameState,
+                            playerColor: player.color,
+                            playerName: player.name
+                        }
+                    });
+                }
+            }
+
+            // Broadcast the new state to all players
+            this.broadcastGameState();
+        } else {
+            // Notify the other player that this player accepted
+            this.notifyOpponent(socketId, 'restart-accepted', {
+                accepter: accepter.name
+            });
         }
     }
 
@@ -261,16 +299,35 @@ class GameRoom {
             return false;
         }
 
-        if (!this.validateGameState(newState)) {
-            console.log(`Update rejected: Invalid game state in game ${this.id}`);
-            return false;
+        // Check for game end conditions
+        if (newState.gameOver) {
+            this.isFinished = true;
+            this.gameState.status = 'finished';
+            this.gameState.winner = newState.winner;
+
+            // Notify all players about the game end
+            for (const [_, p] of this.players) {
+                if (p.connected) {
+                    p.socket.emit('game-over', {
+                        winner: newState.winner,
+                        message: `${newState.winner} has won the game!`
+                    });
+                }
+            }
+
+            // Set a timeout for cleanup if no restart is requested
+            setTimeout(() => {
+                if (!this.pendingRestarts.size && this.isFinished) {
+                    this.cleanup();
+                }
+            }, 180000); // 3 minutes timeout
+            
+            return true;
         }
 
-        const isCorrectTurn = (this.gameState.isWhiteTurn && player.color === 'white') ||
-                            (!this.gameState.isWhiteTurn && player.color === 'black');
-
-        if (!isCorrectTurn) {
-            console.log(`Update rejected: Not player's turn in game ${this.id}`);
+        // Rest of your existing validation logic...
+        if (!this.validateGameState(newState)) {
+            console.log(`Update rejected: Invalid game state in game ${this.id}`);
             return false;
         }
 
@@ -281,7 +338,6 @@ class GameRoom {
     broadcastGameState() {
         const stateToSend = {
             ...this.gameState,
-            lastMove: this.lastMove,
             currentPlayers: this.getPlayerList()
         };
 
@@ -325,22 +381,21 @@ class GameRoom {
         this.isFinished = true;
         this.gameState.status = 'finished';
         
-        // Notify opponent of forfeit
-        this.notifyOpponent(socketId, 'opponent-forfeit', {
-            playerName: player.name,
-            playerColor: player.color,
-            winningColor: player.color === 'white' ? 'black' : 'white'
-        });
+        // Notify all players about the forfeit
+        for (const [_, p] of this.players) {
+            if (p.connected) {
+                p.socket.emit('game-forfeited', {
+                    forfeitingPlayer: player.name,
+                    forfeitingColor: player.color,
+                    message: `${player.name} has forfeited the game!`
+                });
+            }
+        }
 
-        // Notify both players
-        io.to(this.id).emit('game-over', {
-            winner: player.color === 'white' ? 'black' : 'white',
-            byForfeit: true
-        });
-
+        // Cleanup after a short delay
         setTimeout(() => {
             this.cleanup();
-        }, 1000);
+        }, 3000);
     }
 
     notifyOpponent(socketId, event, data) {
@@ -370,18 +425,12 @@ class GameRoom {
 const gameRooms = new Map();
 
 function generateGameId() {
-    let id;
-    do {
-        id = Math.random().toString(36).substring(2, 7).toUpperCase();
-    } while (gameRooms.has(id));
-    
-    console.log('Generated new game ID:', id);
-    return id;
+    const id = Math.random().toString(36).substring(2, 7).toUpperCase();
+    return gameRooms.has(id) ? generateGameId() : id;
 }
 
 function cleanupStaleGames() {
     for (const [gameId, gameRoom] of gameRooms.entries()) {
-        const timeSinceEnd = Date.now() - gameRoom.lastActivityTime;
         if (gameRoom.isFinished || gameRoom.isStale()) {
             console.log(`Cleaning up game room ${gameId}`);
             gameRoom.cleanup();
@@ -402,33 +451,19 @@ io.on('connection', (socket) => {
             }
 
             const gameId = generateGameId();
-            console.log(`Creating new game with ID: ${gameId}`);
-
             const gameRoom = new GameRoom(gameId);
             const playerColor = gameRoom.addPlayer(socket, playerName);
             
             gameRooms.set(gameId, gameRoom);
             socket.join(gameId);
 
-            // First, emit the game ID separately to ensure it's displayed
-            socket.emit('game-id-generated', {
-                gameId: gameId,
-                message: `Your Game ID is: ${gameId}`
-            });
-
-            // Then emit the full game creation event
             socket.emit('game-created', {
-                gameId: gameId,
-                playerColor: playerColor,
-                playerName: playerName,
-                gameState: {
-                    ...gameRoom.gameState,
-                    isMultiplayer: true,
-                    gameId: gameId
-                }
+                gameId,
+                playerColor,
+                gameState: gameRoom.gameState
             });
 
-            console.log(`Created game ${gameId} for player ${playerName} (${playerColor})`);
+            console.log(`Created game ${gameId} for player ${playerName}`);
         } catch (error) {
             console.error('Error creating game:', error);
             socket.emit('error', { message: 'Failed to create game' });
@@ -601,9 +636,7 @@ io.on('connection', (socket) => {
         } catch (error) {
             console.error('Error handling disconnect:', error);
         }
-    });
-    
-    
+  });
 });
 
 // Cleanup interval
