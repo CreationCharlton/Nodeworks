@@ -181,14 +181,18 @@ class GameRoom {
         const requester = this.players.get(socketId);
         if (!requester) return;
 
-        // Add the requester to pending restarts
-        this.pendingRestarts.add(socketId);
-        
+        // Reset game state but keep players
+        this.gameState = this.createInitialGameState();
+        this.gameState.status = 'playing';
+        this.gameState.currentPlayers = this.getPlayerList();
+
+        this.broadcastGameState();
         // Notify the opponent about the restart request
-        this.notifyOpponent(socketId, 'restart-request', {
-            requester: requester.name,
-            playerColor: requester.color
-        });
+        for (const [_, player] of this.players) {
+            player.socket.emit('game-restarted', {
+                gameState: this.gameState
+            });
+        }
     }
 
     handleRestartAccept(socketId) {
