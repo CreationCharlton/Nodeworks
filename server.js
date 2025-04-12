@@ -181,18 +181,14 @@ class GameRoom {
         const requester = this.players.get(socketId);
         if (!requester) return;
 
-        // Reset game state but keep players
-        this.gameState = this.createInitialGameState();
-        this.gameState.status = 'playing';
-        this.gameState.currentPlayers = this.getPlayerList();
-
-        this.broadcastGameState();
+        // Add the requester to pending restarts
+        this.pendingRestarts.add(socketId);
+        
         // Notify the opponent about the restart request
-        for (const [_, player] of this.players) {
-            player.socket.emit('game-restarted', {
-                gameState: this.gameState
-            });
-        }
+        this.notifyOpponent(socketId, 'restart-request', {
+            requester: requester.name,
+            playerColor: requester.color
+        });
     }
 
     handleRestartAccept(socketId) {
@@ -211,7 +207,7 @@ class GameRoom {
                 ...this.createInitialGameState(),
                 status: 'playing',
                 isMultiplayer: true,
-                gameId: this.id, // Keep the same game ID
+                gameId: this.id,
                 currentPlayers: this.getPlayerList()
             };
 
@@ -229,7 +225,8 @@ class GameRoom {
                         gameState: {
                             ...this.gameState,
                             playerColor: player.color,
-                            playerName: player.name
+                            playerName: player.name,
+                            isMultiplayer: true
                         }
                     });
                 }
