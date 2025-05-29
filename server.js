@@ -31,7 +31,7 @@ const io = new Server(server, {
 });
 
 const corsOptions = {
-    origin: ['https://www.incomparable-mooncake-18764b.netlify.app/', 'http://localhost:3000'], 
+    origin: ['https://www.pr1me5.com', 'https://www.incomparable-mooncake-18764b.netlify.app/', 'http://localhost:3000'], 
     methods: ["GET", "POST"],
     credentials: true
   };
@@ -63,6 +63,10 @@ class GameRoom {
                 pieces: []
             },
             isWhiteTurn: true,
+            whiteGoldenPoints: 0,
+            blackGoldenPoints: 0,
+            currentOperation: null,
+            lastMove: null,
             status: 'waiting',
             whiteGoldenStorage: [],
             blackGoldenStorage: [],
@@ -165,6 +169,12 @@ class GameRoom {
             return false;
         }
 
+        if (typeof state.whiteGoldenPoints !== 'number' || 
+            typeof state.blackGoldenPoints !== 'number' || 
+            typeof state.isWhiteTurn !== 'boolean') {
+            return false;
+        }
+        
         // Validate each piece has required properties
         for (const piece of state.board.pieces) {
             if (!piece.hasOwnProperty('value') || 
