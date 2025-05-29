@@ -51,6 +51,15 @@ ioInstance.on('connection', (socket) => {
 
     // Handle player registration
     socket.on('registerPlayer', (username) => {
+        // Remove existing player with same name if any
+        for (const [existingId, player] of activePlayers.entries()) {
+            if (player.username === username) {
+                console.log(`Removing existing player ${username}`);
+                activePlayers.delete(existingId);
+                break;
+            }
+        }
+
         activePlayers.set(socket.id, {
             username,
             socketId: socket.id,
@@ -59,6 +68,11 @@ ioInstance.on('connection', (socket) => {
         
         // Broadcast updated player list to all clients
         ioInstance.emit('activePlayers', Array.from(activePlayers.values()));
+    });
+
+    // Handle getActivePlayers request
+    socket.on('getActivePlayers', () => {
+        socket.emit('activePlayers', Array.from(activePlayers.values()));
     });
 
     // Handle game creation
@@ -75,7 +89,10 @@ ioInstance.on('connection', (socket) => {
         });
         
         socket.join(gameId);
-        socket.emit('game-created', { gameId });
+        socket.emit('game-created', { 
+            gameId,
+            playerColor: 'white'
+        });
     });
 
     // Handle game joining
@@ -168,14 +185,14 @@ ioInstance.on('connection', (socket) => {
     });
 
     // Handle player challenge
-    socket.on('challengePlayer', ({ targetId }) => {
+    socket.on('challengePlayer', ({ targetId, challengerName }) => {
         const challenger = activePlayers.get(socket.id);
         const target = activePlayers.get(targetId);
         
         if (challenger && target && !target.inGame) {
             ioInstance.to(targetId).emit('challengeReceived', {
                 challengerId: socket.id,
-                challengerName: challenger.username
+                challengerName: challengerName || challenger.username
             });
         }
     });
@@ -187,16 +204,43 @@ ioInstance.on('connection', (socket) => {
             const challenger = activePlayers.get(challengerId);
             const responder = activePlayers.get(socket.id);
             
-            // Update player status
-            activePlayers.get(challengerId).inGame = true;
-            activePlayers.get(socket.id).inGame = true;
-            
-            // Notify both players
-            ioInstance.to(challengerId).emit('gameStarted', { gameId, opponent: responder.username });
-            ioInstance.to(socket.id).emit('gameStarted', { gameId, opponent: challenger.username });
-            
-            // Broadcast updated player list
-            ioInstance.emit('activePlayers', Array.from(activePlayers.values()));
+            if (challenger && responder) {
+                // Update player status
+                activePlayers.get(challengerId).inGame = true;
+                activePlayers.get(socket.id).inGame = true;
+                
+                // Create game room
+                gameRooms.set(gameId, {
+                    host: challengerId,
+                    players: [{
+                        id: challengerId,
+                        name: challenger.username,
+                        color: 'white'
+                    }, {
+                        id: socket.id,
+                        name: responder.username,
+                        color: 'black'
+                    }],
+                    status: 'playing'
+                });
+
+                // Join both players to the game room
+                ioInstance.sockets.sockets.get(challengerId)?.join(gameId);
+                socket.join(gameId);
+                
+                // Notify both players
+                ioInstance.to(challengerId).emit('game-created', { 
+                    gameId,
+                    playerColor: 'white'
+                });
+                socket.emit('game-created', { 
+                    gameId,
+                    playerColor: 'black'
+                });
+                
+                // Broadcast updated player list
+                ioInstance.emit('activePlayers', Array.from(activePlayers.values()));
+            }
         } else {
             ioInstance.to(challengerId).emit('challengeDeclined', { playerId: socket.id });
         }
