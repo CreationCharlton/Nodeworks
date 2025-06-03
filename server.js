@@ -174,6 +174,20 @@ class GameRoom {
             typeof state.isWhiteTurn !== 'boolean') {
             return false;
         }
+
+        if (state.vibratingPieces) {
+            if (!Array.isArray(state.vibratingPieces)) return false;
+            for (const vp of state.vibratingPieces) {
+              if (typeof vp.row !== 'number' || 
+                  typeof vp.col !== 'number' || 
+                  typeof vp.timer !== 'number') return false;
+            }
+          }
+          
+          if (state.turnIndicatorVibration) {
+            if (typeof state.turnIndicatorVibration.active !== 'boolean' ||
+                typeof state.turnIndicatorVibration.progress !== 'number') return false;
+          }
         
         // Validate each piece has required properties
         for (const piece of state.board.pieces) {
